@@ -1,0 +1,3 @@
+C:/Users/mimic/OneDrive/Desktop/PA4 Operating Systems/cmake-build-debug/CMakeFiles/PA4_Operating_Systems.dir
+C:/Users/mimic/OneDrive/Desktop/PA4 Operating Systems/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/mimic/OneDrive/Desktop/PA4 Operating Systems/cmake-build-debug/CMakeFiles/rebuild_cache.dir
