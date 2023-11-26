@@ -16,6 +16,7 @@ int main(int argc, char *argv[]) {
 
     }
     else{
+        
         printf("check succeeded\n");
         printf("initializing filesystem\n");
         init_software_disk();

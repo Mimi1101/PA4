@@ -32,6 +32,7 @@ FSError fserror;
 
 typedef struct Inode
 {
+    
     uint16_t direct_blocks[13];
     uint16_t indirect_block;
    uint32_t size;   // this is come in handy coz every inode has 13 direct and one indirect and our inode has to be 32 bytes according to gombe
