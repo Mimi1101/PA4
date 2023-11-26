@@ -38,16 +38,16 @@ typedef enum  {
 // open existing file with pathname 'name' and access mode 'mode'.
 // Current file position is set to byte 0.  Returns NULL on
 // error. Always sets 'fserror' global.
-File open_file(char *name, FileMode mode);
+File open_file(char *name, FileMode mode); //done
 
 // create and open new file with pathname 'name' and (implied) access
 // mode READ_WRITE.  Current file position is set to byte 0.  Returns
 // NULL on error. Always sets 'fserror' global.
 
-File create_file( char *name);
+File create_file( char *name); //done
 
 // close 'file'.  Always sets 'fserror' global.
-void close_file(File file);
+void close_file(File file); //done
 
 // read at most 'numbytes' of data from 'file' into 'buf', starting at the 
 // current file position.  Returns the number of bytes read. If end of file is reached,
@@ -77,19 +77,20 @@ int delete_file(char *name);
 
 // determines if a file with 'name' exists and returns 1 if it exists, otherwise 0.
 // Always sets 'fserror' global.
-int file_exists(char *name);
+int file_exists(char *name); //done
 
 // describe current filesystem error code by printing a descriptive
 // message to standard error.
-void fs_print_error(void);
+void fs_print_error(void); //done
 
 // extra function to make sure structure alignment, data structure
 // sizes, etc. on target platform are correct.  Should return 1 on
 // success, 0 on failure.  This should be used in disk initialization
 // to ensure that everything will work correctly.
-int check_structure_alignment(void);
+int check_structure_alignment(void); //formatfs.c
 
 // filesystem error code set (set by each filesystem function)
+//done
 extern FSError fserror;
 
 
