@@ -21,7 +21,7 @@
 #define LAST_DATA_BLOCK 4095
 #define MAX_FILENAME_SIZE 507
 #define NUM_DIRECT_INODE_BLOCKS 13
-#define NUM_SINGLE_INDIRECT_BLOCKS (SOFTWARE_DISK_BLOCK_SIZE / sizeof(uint16_t))
+#define NUM_SINGLE_INDIRECT_BLOCKS (SOFTWARE_DISK_BLOCK_SIZE / sizeof(uint16_t)) // 1
 #define MAX_FILE_SIZE (NUM_DIRECT_INODE_BLOCKS + NUM_SINGLE_INDIRECT_BLOCKS) * SOFTWARE_DISK_BLOCK_SIZE
 #define MAX_FILE_NAME_LENGTH 256
 FSError fserror;
@@ -29,17 +29,13 @@ FSError fserror;
 // Represents an Inode, a data structure that stores information about a file.
 // tracks the size of the file and blocks that are used
 
-
 typedef struct Inode
 {
-    
-    uint16_t direct_blocks[13];
+
+    int direct_blocks[13];
     uint16_t indirect_block;
-   uint32_t size;   // this is come in handy coz every inode has 13 direct and one indirect and our inode has to be 32 bytes according to gombe
-
-
+    uint32_t size; // this is come in handy coz every inode has 13 direct and one indirect and our inode has to be 32 bytes according to gombe
 } Inode;
-
 
 // typedef struct FileDirectory
 // {
@@ -47,24 +43,19 @@ typedef struct Inode
 //     char *fsname;
 // } FileDirectory;
 
-
 struct FileInternals
 {
     // FileDirectory direntry; // A DirEntry structure providing file name and inode id.
-    Inode i_data;           // An Inode structure holding file-related information.
+    Inode *i_data;          // An Inode structure holding file-related information.
     FileMode mode;          /* used to store the mode in which the file is opened, such as read mode, write mode, or append mode. */
     uint32_t position;      // current position
     uint16_t current_block; // current block
     bool open;              // Temp bool used to track open or closed
     int inode_id;
     char *fsname;
-
-
 } FileInternals;
 
-
 // typedef struct FileInternal *File;
-
 
 // Global variables
 uint8_t blockBitMap[SOFTWARE_DISK_BLOCK_SIZE];
@@ -72,12 +63,11 @@ uint8_t inodeBitMap[512];
 File directory[MAX_FILES];
 Inode inodes[512];
 
-
 // THROW ERRORS!!
 File create_file(char *name)
 {
     // find free bitmap for available inode
-     printf("Size of Inode: %lu bytes\n", sizeof(Inode));
+    printf("Size of Inode: %lu bytes\n", sizeof(Inode));
     int inode_id = -1;
     for (int i = 0; i < sizeof(inodeBitMap); i++)
     {
@@ -96,10 +86,8 @@ File create_file(char *name)
         return NULL;
     }
 
-
     // Setting up file directory internals
     File file = malloc(sizeof(FileInternals));
-
 
     if (file == NULL)
     {
@@ -108,19 +96,16 @@ File create_file(char *name)
         return NULL;
     }
 
-
     // Initialize the file structure
     memset(file, 0, sizeof(FileInternals));
 
-
-    //Initializing file fields
+    // Initializing file fields
     file->mode = READ_WRITE;
     file->position = 0;
     file->current_block = 0;
     file->open = true;
     file->fsname = name;
     file->inode_id = inode_id;
-
 
     // Add the new file to the directory
     for (int i = 0; i < MAX_FILES; i++)
@@ -132,12 +117,8 @@ File create_file(char *name)
         }
     }
 
-
-
-
     // Write the updated inode bitmap to the software disk
-    write_sd_block(inodeBitMap, INODE_BITMAP_BLOCK);
-
+    printf("Result for write: %d\n", (inodeBitMap, INODE_BITMAP_BLOCK));
 
     // Create and write the inode structure to the software disk
     Inode *inode = malloc(sizeof(Inode));
@@ -148,25 +129,23 @@ File create_file(char *name)
         return NULL;
     }
 
+    for (int i = 0; i < 13; i++)
+    {
+        inode->direct_blocks[i] = 0;
+    }
 
-    // Initialize the inode structure
-    memset(inode, 0, sizeof(Inode));
-
+    file->i_data = inode;
 
     // Write the inode structure to the software disk
     write_sd_block(inode, FIRST_INODE_BLOCK + inode_id);
-
 
     // Write the updated directory to the software disk
     write_sd_block(directory, FIRST_DIR_ENTRY_BLOCK);
     fserror = FS_NONE;
 
-
-    // removed the (File) cast might throw an error
     printf("ID: %d, Name: %s\n", file->inode_id, file->fsname);
     return file;
 }
-
 
 // THROW ERRORS!!
 File open_file(char *name, FileMode mode)
@@ -196,14 +175,12 @@ File open_file(char *name, FileMode mode)
     return NULL; // Check this
 }
 
-
 // THROW ERRORS!!
 void close_file(File file)
 {
     file->open = false;
     fserror = FS_NONE;
 }
-
 
 // THROW ERRORS!!
 int file_exists(char *name)
@@ -222,7 +199,6 @@ int file_exists(char *name)
     return 0;
 }
 
-
 void fs_print_error(void)
 {
     switch (fserror)
@@ -231,13 +207,11 @@ void fs_print_error(void)
         printf("NO ERROR\n");
         break;
 
-
     case FS_OUT_OF_SPACE:
         // The operation caused the software disk to fill up
         printf("ERROR: Disk is out of space\n");
         exit(0);
         break;
-
 
     case FS_FILE_NOT_OPEN:
         // Attempted read/write/close/etc. on a file that isn't open
@@ -245,13 +219,11 @@ void fs_print_error(void)
         exit(0);
         break;
 
-
     case FS_FILE_OPEN:
         // File is already open. Concurrent opens are not supported, and neither is deleting a file that is open.
         printf("ERROR: File already open\n");
         exit(0);
         break;
-
 
     case FS_FILE_NOT_FOUND:
         // Attempted open or delete of a file that doesn’t exist
@@ -259,13 +231,11 @@ void fs_print_error(void)
         exit(0);
         break;
 
-
     case FS_FILE_READ_ONLY:
         // Attempted write to a file opened for READ_ONLY
         printf("ERROR: File is read-only\n");
         exit(0);
         break;
-
 
     case FS_FILE_ALREADY_EXISTS:
         // Attempted creation of a file with an existing name
@@ -273,13 +243,11 @@ void fs_print_error(void)
         exit(0);
         break;
 
-
     case FS_EXCEEDS_MAX_FILE_SIZE:
         // Seek or write would exceed the maximum file size
         printf("ERROR: Exceeds max file size\n");
         exit(0);
         break;
-
 
     case FS_ILLEGAL_FILENAME:
         // Filename begins with a null character
@@ -287,13 +255,11 @@ void fs_print_error(void)
         exit(0);
         break;
 
-
     case FS_IO_ERROR:
         // Something really bad happened
         printf("ERROR: I/O error\n");
         exit(0);
         break;
-
 
     default:
         // Handle unknown error code (optional)
@@ -303,6 +269,53 @@ void fs_print_error(void)
     }
 }
 
+unsigned long write_file(File file, void *buf, unsigned long numbytes)
+{   
+    fserror = FS_NONE;
+    unsigned long remaining_space = SOFTWARE_DISK_BLOCK_SIZE - numbytes;
 
+    // Over Writing Error
+    if (numbytes > remaining_space)
+    {
+        fserror = FS_OUT_OF_SPACE;
+        return 0;
+    }
+    // Search for free Block
+    int blockNum = -1;
+    for (int i = FIRST_DATA_BLOCK; i <= LAST_DATA_BLOCK; i++)
+    {
+        if (blockBitMap[i] == 0)
+        {
+            printf("I am here\n");
+            blockNum = i;
+            for (int j = 0; j < NUM_DIRECT_INODE_BLOCKS; j++)
+            {
+                if (file->i_data->direct_blocks[j] == 0)
+                {
+                    file->i_data->direct_blocks[j] = blockNum;
+                    break;
+                }
+                /*Store Indirect Blocks here*/
+            }
+            blockBitMap[i] = 1;
+            break;
+        }
+    }
 
+    // Block not found
+    if (blockNum == -1)
+    {
+        fserror = FS_OUT_OF_SPACE; // or another appropriate error code
+        return 0;
+    }
 
+    file->position += numbytes;
+
+    printf("Current Position is now: %d and Desired Block is: %d\n", file->position, blockNum);
+    // Preform Write, Cannot be this easy
+    memset(buf, 'B', SOFTWARE_DISK_BLOCK_SIZE);
+    printf("Return Values was: %d\n", write_sd_block(buf, blockNum));
+
+    // Update Position
+    return numbytes;
+}
