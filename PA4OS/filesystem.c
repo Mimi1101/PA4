@@ -4,20 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
-<<<<<<< Updated upstream
-//
-=======
-int find_freeinode(void);
-int find_freedirspace(void);
-void init_file(File file, char *name, int inode_id);
-int find_inode_block(int inode_id);
-int find_dirblock(int dir_entry);
+void print_block_contents(unsigned long blockNum, unsigned long numbytes);
+int grab_inode_block(int potential_block, char *name);
+void print_inode_ids_in_block(int desiredID, int blockNum);
+int grab_inode_index(int potential_block, char *name);
+int find_inode_entry(int inode_id);
+int find_free_inode(void);
+void fs_print_error(void);
 
->>>>>>> Stashed changes
-// Created By mimic on 11/15/2023.
-//
-// copied from her word document in PA4
 #define MAX_FILES 512
 #define DATA_BITMAP_BLOCK 0
 #define INODE_BITMAP_BLOCK 1
@@ -31,249 +27,234 @@ int find_dirblock(int dir_entry);
 #define LAST_DATA_BLOCK 4095
 #define MAX_FILENAME_SIZE 507
 #define NUM_DIRECT_INODE_BLOCKS 13
-#define NUM_SINGLE_INDIRECT_BLOCKS (SOFTWARE_DISK_BLOCK_SIZE / sizeof(uint16_t))
+#define NUM_SINGLE_INDIRECT_BLOCKS (SOFTWARE_DISK_BLOCK_SIZE / sizeof(uint16_t)) // 1
 #define MAX_FILE_SIZE (NUM_DIRECT_INODE_BLOCKS + NUM_SINGLE_INDIRECT_BLOCKS) * SOFTWARE_DISK_BLOCK_SIZE
 #define MAX_FILE_NAME_LENGTH 256
 FSError fserror;
 
-<<<<<<< Updated upstream
-// Represents an Inode, a data structure that stores information about a file.
-// tracks the size of the file and blocks that are used
-
-typedef struct Inode{
-
-uint16_t direct_blocks[13];
-uint16_t indirect_block;
-=======
 typedef struct Inode
 {
->>>>>>> Stashed changes
-
+    uint16_t direct_blocks[13];
+    uint16_t single_indrect;
+    File file_md;
 } Inode;
 
-<<<<<<< Updated upstream
-typedef struct FileDirectory{
- int id;
- //Inode id
- char fsname[MAX_FILE_NAME_LENGTH];
-} FileDirectory;
-
-typedef struct FileInternal{
-    FileDirectory direntry;      // A DirEntry structure providing file name and inode id.
-    Inode i_data;           // An Inode structure holding file-related information.
-=======
 struct FileInternals
 {
-    // FileDirectory direntry; // A DirEntry structure providing file name and inode id.
-    Inode *i_data;          // An Inode structure holding file-related information.
->>>>>>> Stashed changes
-    FileMode mode;          /* used to store the mode in which the file is opened, such as read mode, write mode, or append mode. */
-    uint32_t position;      // current position
-    uint16_t current_block; // current block
-}FileInternal;
+    FileMode mode;     /* used to store the mode in which the file is opened, such as read mode, write mode, or append mode. */
+    int position;      // current position
+    int current_block; // current block
+    bool open;         // Temp bool used to track open or closed
+    char *fsname;
+    int inode_id;
+} FileInternals;
 
-<<<<<<< Updated upstream
-//Global variables
-=======
-// Global variables
->>>>>>> Stashed changes
-uint8_t blockBitMap[SOFTWARE_DISK_BLOCK_SIZE];
-uint8_t inodeBitMap[512];
-FileDirectory directory[MAX_FILES];
+uint16_t inode_bitmap[MAX_FILES];
+uint16_t data_bitmap[LAST_DATA_BLOCK - FIRST_DATA_BLOCK];
+Inode inode_array[INODES_PER_BLOCK];
+// Think about adding DataBitmap block
 
-<<<<<<< Updated upstream
-//THROW ERRORS!!
-File create_file( char *name){
-
-    //find free bitmap for available inode 
-    int inode_id = -1;
-    for (int i = 0; i < sizeof(inodeBitMap); i++) {
-        if (inodeBitMap[i] == 0) {
-            inode_id = i;
-            inodeBitMap[i] = 1;
-            break;
-        }
-    }
-    // If no inode is available, return an error
-    if (inode_id == -1) {
-=======
-// THROW ERRORS!!
+// Throw the following erros: File_Already_Exist
 File create_file(char *name)
 {
 
-    // find free bitmap for available inode
-    printf("Size of Inode: %lu bytes\n", sizeof(Inode));
+    fserror = FS_NONE;
+    int ret;
 
-    int inode_id = find_freeinode();
+    // Inode_bitmap Handler --> finding free inode
+    read_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
+    int inode_id = find_free_inode();
+    int i_entry = find_inode_entry(inode_id); // Grabbing Recent Inode Array
+    read_sd_block(inode_array, i_entry);
+
     if (inode_id == -1)
     {
->>>>>>> Stashed changes
-        printf("Error: Unable to find a free inode.\n");
         fserror = FS_OUT_OF_SPACE;
-        return NULL;
+        return NULL; // No Free Inode
     }
+    printf("Contents of Block %lu: ", INODE_BITMAP_BLOCK);
+    print_block_contents(INODE_BITMAP_BLOCK, 10);
+    printf("...\n");
 
-<<<<<<< Updated upstream
-   // Setting up file directory internals
-    FileInternal *file = malloc(sizeof(FileInternal));
-    if (file == NULL) {
-=======
-    /*Begin: Creating File*/
-    File file = malloc(sizeof(FileInternals));
-    if (file == NULL)
+    printf("IN_BMP: Free Inode at inode_bitmap[%d] has been found and updated in array/blocks\n", inode_id);
+
+    // Creating file_metadata
+
+    // Creating Inode Structure
+    Inode *inode = &inode_array[inode_id];
+    if (inode == NULL)
     {
->>>>>>> Stashed changes
-        printf("Error: Memory allocation failed.\n");
-        fserror = FS_OUT_OF_SPACE;
+        return NULL; // Something bad happened
+    }
+    memset(inode->direct_blocks, 0, NUM_DIRECT_INODE_BLOCKS);
+    inode->single_indrect = 1;
+    inode->file_md = malloc(sizeof(File));
+    inode->file_md->fsname = name;
+    inode->file_md->current_block = 0;
+    inode->file_md->mode = READ_WRITE;
+    inode->file_md->position = 0;
+    inode->file_md->open = true;
+    inode->file_md->inode_id = inode_id + 1;
+    // write_sd_block(inode_array, i_entry);
+    // read_sd_block(inode_array,i_entry);
+
+    // Storing meta data in inode
+    printf("MD_STORED: File{%s} has been stored inside Inode_ID: %d\n", inode->file_md->fsname, inode->file_md->inode_id);
+    printf("IN_STORED: ");
+    print_inode_ids_in_block(inode->file_md->inode_id, i_entry); // Confirms Storage
+
+    printf("CREATE SUCCESS: File{%s}, Inode_ID: %d\n", inode->file_md->fsname, inode->file_md->inode_id);
+    printf("\n");
+
+    write_sd_block(inode_array, i_entry);             // COMEON!! must update
+    write_sd_block(inode_bitmap, INODE_BITMAP_BLOCK); // COMEON!! must update
+    // free(file);
+    return inode->file_md;
+}
+
+File open_file(char *name, FileMode mode)
+{
+    int exist = file_exists(name);
+    if (!file_exists)
+    {
+        fserror = FS_FILE_NOT_FOUND;
         return NULL;
     }
-<<<<<<< Updated upstream
+    int block = grab_inode_block(FIRST_INODE_BLOCK, name);
+    int index = grab_inode_index(FIRST_INODE_BLOCK, name);
+    if (index == -1 || block == -1)
+    {
+        fserror = FS_FILE_NOT_FOUND;
+        return NULL;
+    }
 
-    // Initialize the file structure
-    memset(file, 0, sizeof(FileInternal));
+    if (inode_array[index].file_md->open == true)
+    {
+        printf("OPEN_ERROR: File IS OPEN ALREADY\n");
+        fserror = FS_FILE_OPEN;
+        write_sd_block(inode_array, block);
+        return inode_array[index].file_md;
+    }
+    else
+    {
+        inode_array[index].file_md->open = false;
+        inode_array[index].file_md->mode = mode;
+        write_sd_block(inode_array, block);
+        return inode_array[index].file_md;
+    }
+}
 
-    // Set the file name
-    strncpy(file->direntry.fsname, name, MAX_FILE_NAME_LENGTH - 1);
+unsigned long write_file(File file, void *buf, unsigned long numbytes)
+{
+    int ret = file_exists(file->fsname);
+    if (!ret)
+    {
+        fserror = FS_FILE_NOT_FOUND;
+        return numbytes;
+    }
 
-    // Set the inode id
-    file->direntry.id = inode_id;
+    int block = grab_inode_block(FIRST_INODE_BLOCK, file->fsname);
+    int index = grab_inode_index(FIRST_INODE_BLOCK, file->fsname);
+    printf("WRITE_FOUND: Got File{%s}\n", inode_array[index].file_md->fsname);
 
-    // Set the initial mode
-    file->mode = READ_WRITE;
 
-    // Set the initial position
-    file->position = 0;
+}
 
-    // Set the initial block
-    file->current_block = 0;
-   // so i did try to run with the test function and it does create a file but its not showing up in our folder
-   // because i think when we create a file we have to write the directory information such as file name and size and all that to the software disk
-   // I am trying that here
+// Throw Error If it Doesnt Exist
+void close_file(File file)
+{
+    int ret = file_exists(file->fsname);
+    int index = grab_inode_index(INODE_BITMAP_BLOCK, file->fsname);
+    if (ret)
+    {
+        printf("CLOSE: File is Closed\n");
+        inode_array[index].file_md->open = false;
+    }
+}
 
-   // Add the new file to the directory
-    for (int i = 0; i < MAX_FILES; i++) {
-        if (directory[i].id == 0) {
-            directory[i] = file->direntry;
+int file_exists(char *name)
+{
+    int potential_block = 2;
+    while (potential_block < 6)
+    {
+        // printf("Block is: %d\n", potential_block);
+        int ret = read_sd_block(inode_bitmap, potential_block);
+        // printf("ret is: %d\n", ret);
+        for (int i = 0; i < INODES_PER_BLOCK; i++)
+        {
+            if ((inode_array[i].file_md != NULL) && (inode_array[i].file_md->fsname == name))
+            {
+                printf("EXIST: File{%s} exist \n", name);
+                return 1;
+            }
+            // printf("%d\n", i);
+        }
+        potential_block++;
+    }
+    fserror = FS_FILE_NOT_FOUND;
+    printf("NON_EXIST: File{%s} doesn't exist\n", name);
+    return 0;
+}
+
+void print_block_contents(unsigned long blockNum, unsigned long numbytes)
+{
+    uint16_t buffer[SOFTWARE_DISK_BLOCK_SIZE]; // has to be the same size as array
+    memset(buffer, 0, SOFTWARE_DISK_BLOCK_SIZE);
+    int read_success = read_sd_block(buffer, blockNum);
+    if (read_success)
+    {
+        for (int i = 0; i < numbytes; i++)
+        {
+            printf("%d ", buffer[i]);
+        }
+    }
+    else
+    {
+        printf("Error reading Block %lu\n", blockNum);
+    }
+}
+
+int find_free_inode()
+{
+
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (inode_bitmap[i] == 0)
+        {
+            inode_bitmap[i] = 1;
+            // printf("INDEX %d IS FREE\n", i);
+            int ret = write_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
+            read_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
+            if (ret)
+            {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+int find_inode_entry(int inode_id)
+{
+    int ret = FIRST_INODE_BLOCK + (inode_id - 1) / INODES_PER_BLOCK;
+    if (inode_id > MAX_FILE_SIZE)
+    {
+        ret = -1; // Invalid inode_id
+    }
+    return ret;
+}
+
+void print_inode_ids_in_block(int desiredID, int blockNum)
+{
+    // printf("Hey the first entry is: %s\n", inode_array[0].file_md->fsname);
+    for (int i = 0; i < INODES_PER_BLOCK; i++)
+    {
+        if (inode_array[i].file_md != NULL && inode_array[i].file_md->inode_id == desiredID)
+        {
+            printf("Inode_ID %d is located in inode_array[%d] inside of block %d\n", desiredID, i, blockNum);
             break;
         }
     }
-
-    // Write the updated inode bitmap to the software disk
-    write_sd_block(inodeBitMap, INODE_BITMAP_BLOCK);
-
-    // Create and write the inode structure to the software disk
-=======
-    memset(file, 0, sizeof(FileInternals));
-    init_file(file, name, inode_id);
-    /*End: Creating File*/
-
-    int dir_id = find_freedirspace();
-    directory[dir_id] = file;
-
-    /*Begin: Creating Inode*/
->>>>>>> Stashed changes
-    Inode *inode = malloc(sizeof(Inode));
-    if (inode == NULL) {
-        printf("Error: Memory allocation failed for inode.\n");
-        fserror = FS_OUT_OF_SPACE;
-        free(file);
-        return NULL;
-    }
-<<<<<<< Updated upstream
-
-    // Initialize the inode structure
-    memset(inode, 0, sizeof(Inode));
-=======
-    for (int i = 0; i < NUM_DIRECT_INODE_BLOCKS; i++)
-    {
-        inode->direct_blocks[i] = 0;
-    }
-    file->i_data = inode;
-    /*End: Creating Inode*/
->>>>>>> Stashed changes
-
-    /*Begin: Writing to Inode Block*/
-    int inode_blockentry = find_inode_block(inode_id);
-    int inode_write = write_sd_block(file->i_data, inode_blockentry);
-    if (inode_write == 0 || inode_blockentry == -1)
-    { // Write Failed or Out of Space
-        return NULL;
-    }
-    printf("Inode_ID: %d Has been succesfully writtin in block: %d\n", inode_id, inode_blockentry);
-    /*End: Writitng to Inode Block*/
-
-<<<<<<< Updated upstream
-    // Write the updated directory to the software disk
-    write_sd_block(directory, FIRST_DIR_ENTRY_BLOCK);
-=======
-    /*Begin: Writitng to Directory Block*/
-    int dir_blockentry = find_dirblock(dir_id);
-    int dir_write = write_sd_block(directory[dir_id], dir_blockentry);
-    if (dir_write == 0 || dir_blockentry == -1)
-    { // Write Failed or Out of Space
-        return NULL;
-    }
-    printf("Entry_ID: %d has been successfully written in block: %d\n", dir_id, dir_write);
-    /*End: Writing to Directory Block*/
->>>>>>> Stashed changes
-
-    return (File)file;
-}
-
-<<<<<<< Updated upstream
-File open_file(char *name, FileMode mode){
-
-=======
-// THROW ERRORS!!
-File open_file(char *name, FileMode mode)
-{
-    int length = sizeof(directory) / sizeof(directory[0]);
-    // Searching For Name
-    for (int i = 0; i < length; i++)
-    { // Found Name and setting up mode
-        if (directory[i]->fsname == name)
-        {
-            File file = directory[i];
-            if (!file->open)
-            {
-                file->mode = mode;
-                fserror = FS_NONE;
-                return file;
-            }
-            else
-            {
-                fserror = FS_FILE_OPEN;
-                return NULL;
-            }
-        }
-    }
-    fserror = FS_FILE_NOT_FOUND;
-    printf("FILE NOT FOUND\n");
-    return NULL; // Check this
-}
-
-// THROW ERRORS!!
-void close_file(File file)
-{
-    file->open = false;
-    fserror = FS_NONE;
-}
-
-// THROW ERRORS!!
-int file_exists(char *name)
-{
-    int length = sizeof(directory) / sizeof(directory[0]);
-    for (int i = 0; i < length; i++)
-    {
-        if (directory[i]->fsname == name)
-        {
-            fserror = FS_NONE;
-            printf("FOUND FILE: %s\n", name);
-            return 1;
-        }
-    }
-    fserror = FS_FILE_NOT_FOUND;
-    return 0;
 }
 
 void fs_print_error(void)
@@ -287,172 +268,86 @@ void fs_print_error(void)
     case FS_OUT_OF_SPACE:
         // The operation caused the software disk to fill up
         printf("ERROR: Disk is out of space\n");
-        exit(0);
         break;
 
     case FS_FILE_NOT_OPEN:
         // Attempted read/write/close/etc. on a file that isn't open
         printf("ERROR: File not open\n");
-        exit(0);
         break;
 
     case FS_FILE_OPEN:
         // File is already open. Concurrent opens are not supported, and neither is deleting a file that is open.
         printf("ERROR: File already open\n");
-        exit(0);
         break;
 
     case FS_FILE_NOT_FOUND:
         // Attempted open or delete of a file that doesn’t exist
         printf("ERROR: File not found\n");
-        exit(0);
         break;
 
     case FS_FILE_READ_ONLY:
         // Attempted write to a file opened for READ_ONLY
         printf("ERROR: File is read-only\n");
-        exit(0);
         break;
 
     case FS_FILE_ALREADY_EXISTS:
         // Attempted creation of a file with an existing name
         printf("ERROR: File already exists\n");
-        exit(0);
         break;
 
     case FS_EXCEEDS_MAX_FILE_SIZE:
         // Seek or write would exceed the maximum file size
         printf("ERROR: Exceeds max file size\n");
-        exit(0);
         break;
 
     case FS_ILLEGAL_FILENAME:
         // Filename begins with a null character
         printf("ERROR: Illegal filename, Filename begins with a null character\n");
-        exit(0);
         break;
 
     case FS_IO_ERROR:
         // Something really bad happened
         printf("ERROR: I/O error\n");
-        exit(0);
         break;
 
     default:
         // Handle unknown error code (optional)
         printf("Unknown error\n");
-        exit(0);
         break;
     }
 }
 
-unsigned long write_file(File file, void *buf, unsigned long numbytes)
+int grab_inode_index(int potential_block, char *name)
 {
-    fserror = FS_NONE;
-    unsigned long remaining_space = SOFTWARE_DISK_BLOCK_SIZE - numbytes;
-    // Over Writing Error
-    if (numbytes > remaining_space)
+    while (potential_block < 6)
     {
-        fserror = FS_OUT_OF_SPACE;
-        return 0;
-    }
-    // Search for free Block
-    int blockNum = -1;
-    for (int i = FIRST_DATA_BLOCK; i <= LAST_DATA_BLOCK; i++)
-    {
-        if (blockBitMap[i] == 0)
+        read_sd_block(inode_bitmap, potential_block); // read from first block
+        for (int i = 0; i < INODES_PER_BLOCK; i++)
         {
-            blockNum = i;
-            // Setting Free Block to Direct Block
-            for (int j = 0; j < NUM_DIRECT_INODE_BLOCKS; j++)
+            if (inode_array[i].file_md->fsname == name)
             {
-                if (file->i_data->direct_blocks[j] == 0)
-                {
-                    file->i_data->direct_blocks[j] = blockNum;
-                    break;
-                }
-                /*WORK ON INDIRECT BLOCKS*/
+                write_sd_block(inode_bitmap, potential_block);
+                return i; // gives index where file is found
             }
-            break;
+            potential_block++;
         }
     }
-    // Block not found
-    if (blockNum == -1)
-    {
-        fserror = FS_OUT_OF_SPACE; // or another appropriate error code
-        return 0;
-    }
-    printf("Current Position is now: %d and Desired Block is: %d\n", file->position, blockNum);
-    char padded_buf[SOFTWARE_DISK_BLOCK_SIZE];       // Setting Padded_Buffer to 4096
-    memset(padded_buf, 0, SOFTWARE_DISK_BLOCK_SIZE); // Initilizing to 0
-    memcpy(padded_buf, buf, numbytes);               // Copying into padded_buffer
-    int ret = write_sd_block(padded_buf, blockNum);  // writing padded_buffer into sd
-    printf("Result from write: %d", ret);
-    if (ret == 0)
-    {
-        sd_print_error();
-        return 0;
-    }
-    printf("Disk Writing Passed!");
-    file->position += numbytes;
-    return numbytes;
->>>>>>> Stashed changes
+    return -1; // Something BAD HAPPENED
 }
 
-/*Helper Methods*/
-int find_freeinode()
+int grab_inode_block(int potential_block, char *name)
 {
-    int inode_id = -1;
-    for (int i = 0; i < sizeof(inodeBitMap); i++)
+    while (potential_block < 6)
     {
-        if (inodeBitMap[i] == 0)
+        read_sd_block(inode_bitmap, potential_block); // read from first block
+        for (int i = 0; i < INODES_PER_BLOCK; i++)
         {
-            inode_id = i;
-            inodeBitMap[i] = 1;
-            break;
+            if (inode_array[i].file_md->fsname == name)
+            {
+                return potential_block; // gives index where file is found
+            }
+            potential_block++;
         }
     }
-    return inode_id;
-}
-
-void init_file(File file, char *name, int inode_id)
-{
-    // Initializing file fields
-    file->mode = READ_WRITE;
-    file->position = 0;
-    file->current_block = 0;
-    file->open = true;
-    file->fsname = name;
-    file->inode_id = inode_id;
-}
-
-int find_freedirspace()
-{
-    for (int i = 0; i < MAX_FILES; i++)
-    {
-        if (directory[i] == NULL)
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
-int find_inode_block(int inode_id)
-{
-    int ret = FIRST_INODE_BLOCK + (inode_id - 1) / INODES_PER_BLOCK;
-    if (inode_id > 512)
-    {
-        ret = -1; // Invalid inode_id
-    }
-    return ret;
-}
-
-int find_dirblock(int dir_entry){
-    int dir_index = FIRST_DIR_ENTRY_BLOCK + (dir_entry - 1) / DIR_ENTRIES_PER_BLOCK;
-    if (dir_index >= LAST_DATA_BLOCK)
-    {
-        return -1;
-    }
-    return dir_index;
+    return -1; // Something BAD HAPPENED
 }
