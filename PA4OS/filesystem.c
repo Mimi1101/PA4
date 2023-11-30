@@ -1,3 +1,6 @@
+//Brandon Walton
+//Bibhushita Baral
+
 #include <stdio.h>
 #include "filesystem.h"
 #include "softwaredisk.h"
@@ -58,7 +61,6 @@ uint16_t data_bitmap[SOFTWARE_DISK_BLOCK_SIZE]; // 4025 blocks avail. 70 + datam
 Inode *inode_array[SOFTWARE_DISK_BLOCK_SIZE];
 File directory_array[SOFTWARE_DISK_BLOCK_SIZE];
 
-// Header Function throw FS_NONE
 /*Begin: File Create helper methods*/
 void fs_print_error(void)
 {
@@ -180,7 +182,7 @@ void print_directory_confirmation(short dir_index, short dir_block)
 {
     File buffer[SOFTWARE_DISK_BLOCK_SIZE];
     read_sd_block(buffer, dir_block);
-    printf("CONFIRM: File_Handler {%s} has been stored\n", buffer[dir_index]->fsname);
+    printf("\nCONFIRM: File_Handler {%s} has been stored\n", buffer[dir_index]->fsname);
 }
 
 void print_inode_confirmation(short inode_id, short i_block)
@@ -190,13 +192,14 @@ void print_inode_confirmation(short inode_id, short i_block)
     printf("CONFIRM: Inode_Handler has position of {%d}. Storage confirmed\n", buffer[inode_id]->position);
 }
 /*End: File Create helper methods*/
+
+// Header Function throw FS_NONE
 File create_file(char *name)
 {
     fserror = FS_NONE;
     // Finding free inode and flipping bit in array
     read_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
-    // printf("Inode Size: %lu\n", sizeof(Inode));
-    // printf("File: %lu\n", sizeof(FileInternals));
+    printf("Inode Size: %lu + File_Internal Size: %lu = %d\n", sizeof(Inode), sizeof(FileInternals), sizeof(Inode) + sizeof(FileInternals));
     short inode_id = find_free_inode();
     if (inode_id == -1)
     {
@@ -208,7 +211,7 @@ File create_file(char *name)
     // printf("\nCREATE: Inode_id: %d\n", inode_id);
 
     // Create File_Handeler
-    directory_array[inode_id] = malloc(sizeof(File));
+    directory_array[inode_id] = malloc(sizeof(FileInternals));
     directory_array[inode_id]->fsname = strdup(name);
     directory_array[inode_id]->inode_id = inode_id;
 
@@ -239,10 +242,9 @@ File create_file(char *name)
     return directory_array[inode_id];
 }
 
-// Header Function throw FS_NONE
 int file_exists(char *name)
 {
-    printf("being called\n");
+    // printf("being called\n");
     fserror = FS_NONE;
     // int ret = -1;
     int potential_block = FIRST_DIR_ENTRY_BLOCK;
@@ -254,7 +256,7 @@ int file_exists(char *name)
             // printf("here\n");
             if (directory_array[i] != NULL && strcmp(directory_array[i]->fsname, name) == 0)
             {
-                printf("Exist: File{%s} exist\n", directory_array[i]->fsname);
+                // printf("Exist: File{%s} exist\n", directory_array[i]->fsname);
                 write_sd_block(directory_array, potential_block);
                 return 1;
             }
@@ -388,8 +390,7 @@ void close_file(File file)
     inode_array[inode_index]->open = false; // Force close, can't close something that is already closed
     write_sd_block(inode_array, i_block);
     write_sd_block(directory_array, dir_block);
-
-} 
+}
 
 /*Begin: Write-File helper methods*/
 uint8_t find_free_data_block()
@@ -420,6 +421,7 @@ void print_write_confirmation(short inode_index, unsigned long numbytes, short d
 /*End: Write-File helper methdods*/
 unsigned long write_file(File file, void *buf, unsigned long numbytes)
 {
+    fserror = FS_NONE;
     // printf("Here\n");
     int success = file_exists(file->fsname);
     if (!success)
@@ -487,9 +489,57 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
     }
 }
 
-int seek_file(File file, unsigned long bytepos){
+int seek_file(File file, unsigned long bytepos)
+{
+    fserror = FS_NONE;
+
     short success = file_exists(file->fsname);
-    if (!success){
+    if (!success)
+    {
         fserror = FS_FILE_NOT_FOUND;
     }
+
+    char inode_index = get_inode_index(file->fsname);
+    char i_block = get_inode_block(file->inode_id);
+    read_sd_block(inode_array, i_block);
+
+    if ((inode_array[inode_index]->position + bytepos) >= MAX_FILE_SIZE)
+    {
+        fserror = FS_EXCEEDS_MAX_FILE_SIZE;
+        return 0;
+    }
+    printf("Position was: %d\n", inode_array[inode_index]->position);
+    inode_array[inode_index]->position += bytepos;
+    write_sd_block(inode_array, i_block);
+    printf("Position is now: %d\n", inode_array[inode_index]->position);
+    return 1;
+}
+
+int delete_file(char *name)
+{
+    fserror = FS_NONE;
+    short success = file_exists(name);
+    if (!success)
+    {
+        fserror = FS_FILE_NOT_FOUND;
+        return 0;
+    }
+    short directory_index = get_directory_index(name);
+    short dir_block = get_directory_block(name);
+    short inode_index = get_inode_index(name);
+    short i_block = get_inode_block(directory_array[directory_index]->inode_id);
+
+    read_sd_block(inode_array, i_block);
+    read_sd_block(directory_array, dir_block);
+
+    inode_bitmap[inode_index] = 0;
+    data_bitmap[directory_index] = 0;
+    free(inode_array[inode_index]);
+    free(directory_array[directory_index]);
+    write_sd_block(inode_array,i_block);
+    write_sd_block(directory_array,dir_block);
+    write_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
+    write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
+    printf("DELETE: File{%s} has been deleted\n", name);
+    return 1;
 }
