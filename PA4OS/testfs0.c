@@ -14,6 +14,7 @@ int main(int argc, char *argv[]) {
 
   // should succeed
   f=create_file("simple");
+  
   printf("ret from create_file(\"blarg\") = %p\n",
 	 f);
 
