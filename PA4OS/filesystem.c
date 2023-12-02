@@ -40,7 +40,7 @@ short get_directory_index(char *name);
 #define MAX_FILENAME_SIZE 507
 #define NUM_DIRECT_INODE_BLOCKS 13
 #define NUM_SINGLE_INDIRECT_BLOCKS (SOFTWARE_DISK_BLOCK_SIZE / sizeof(uint16_t)) // 1
-#define MAX_FILE_SIZE (NUM_DIRECT_INODE_BLOCKS + NUM_SINGLE_INDIRECT_BLOCKS) * SOFTWARE_DISK_BLOCK_SIZE
+#define MAX_FILE_SIZE 65535
 #define MAX_FILE_NAME_LENGTH 256
 FSError fserror;
 
@@ -64,9 +64,9 @@ uint16_t inode_bitmap[SOFTWARE_DISK_BLOCK_SIZE];
 uint16_t data_bitmap[SOFTWARE_DISK_BLOCK_SIZE]; // 4025 blocks avail. 70 + datamap_index Elements mapped 0 70 -> 1 -> 71 2 -> 72 .... 4025 -> 4095
 Inode *inode_array[SOFTWARE_DISK_BLOCK_SIZE];
 File directory_array[SOFTWARE_DISK_BLOCK_SIZE];
+unsigned long fail_writes = 0; // tracker for failed writes, ensures the tester that an infinite loop has not occured
 
-// Helper methods
-
+/*BEGIN: Helper Methods*/
 short find_free_directory_block(short directory_index)
 {
     short index = -1;
@@ -105,6 +105,10 @@ short find_free_data_block()
         {
             data_bitmap[i] = 1;
             write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
+            // for (int i = 0; i <= SOFTWARE_DISK_BLOCK_SIZE; i++)
+            // {
+            //     printf("%d ", data_bitmap[i]);
+            // }
             return i + 1;
         }
     }
@@ -222,7 +226,9 @@ short get_directory_index(char *name)
     fserror = FS_OUT_OF_SPACE; // Couldn't find block
     return -1;
 }
+/*END: Helper Methods*/
 
+/*BEGIN: System Calls*/
 void fs_print_error(void)
 {
     switch (fserror)
@@ -283,7 +289,7 @@ void fs_print_error(void)
     }
 }
 
-// System Calls
+// Expected Errors: File Not Found, FS_FILE_ALREADY_OPEN
 File open_file(char *name, FileMode mode)
 {
     fserror = FS_NONE;
@@ -321,11 +327,20 @@ File open_file(char *name, FileMode mode)
     return directory_array[directory_index];
 }
 
+// Expected Erros: FS_FILE_ALREADY_EXISTS, FS_OUT_OF_SPACE
 File create_file(char *name)
 {
-    printf("Inode Size: %lu + File_Size: %lu = %lu\n", sizeof(Inode), sizeof(FileInternals), sizeof(Inode) + sizeof(FileInternals));
-
     fserror = FS_NONE;
+    short success = file_exists(name);
+    if (success)
+    {
+        fserror = FS_FILE_ALREADY_EXISTS;
+        printf("CREATE_ERROR: File{%s} already exist\n", name);
+        return NULL;
+    }
+
+    printf("Inode Size: %lu + File_Size: %lu = %lu\n", sizeof(Inode), sizeof(FileInternals), sizeof(Inode) + sizeof(FileInternals));
+    printf("MAX FILE SIZE IS: %d\n", MAX_FILE_SIZE);
     // Finding free inode and flipping bit in array
     read_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
     short inode_id = find_free_inode();
@@ -372,8 +387,17 @@ File create_file(char *name)
     return directory_array[inode_id];
 }
 
+// Expected Errors: FS_FILE_NOT_FOUND, FS_FILE_NOT_OPEN
 void close_file(File file)
 {
+    short inode_index = get_inode_index(file->fsname);
+    short i_block = get_inode_block(file->inode_id);
+    short directory_index = get_directory_index(file->fsname);
+    short directory_block = get_directory_block(file->fsname);
+
+    read_sd_block(inode_array, i_block);
+    read_sd_block(directory_array, directory_block);
+
     fserror = FS_NONE;
     short success = file_exists(file->fsname);
     if (!success)
@@ -381,37 +405,34 @@ void close_file(File file)
         fserror = FS_FILE_NOT_FOUND;
         return;
     }
-    short inode_index = get_inode_index(file->fsname);
-    short i_block = get_inode_block(file->inode_id);
-    short directory_index = get_directory_index(file->fsname);
-    short directory_block = get_directory_block(file->fsname);
 
-    read_sd_block(inode_array, i_block);
-    read_sd_block(directory_array, directory_block);
+    if (directory_array[directory_index]->open == false)
+    {
+        fserror = FS_FILE_NOT_OPEN;
+        return;
+    }
 
-    printf("CLOSE: File{%s} is closed", file->fsname);
-    directory_array[directory_index]->open = false; // Force close, can't close something that is already closed
+    printf("CLOSE: File{%s} is closed\n", file->fsname);
+    directory_array[directory_index]->open = false;
     write_sd_block(inode_array, i_block);
     write_sd_block(directory_array, directory_block);
-    // for (int i = 0; i <  LAST_DATA_BLOCK - FIRST_DATA_BLOCK; i++){
-
-    //     printf("%d ", data_bitmap[i]);
-    // }
     return;
 }
 
-/*TWEAK IT UP SOME //TODO: CHANGE POSITION!!!!!!
+// Expected Errors: FS_FILE_NOT_FOUND, FS_FILE_NOT_OPEN, FS_EXCEEDS_MAX_FILE_SIZE, access controls?
 unsigned long read_file(File file, void *buf, unsigned long numbytes)
 {
     fserror = FS_NONE;
-    short success = file_exists(file->fsname);
 
+    // Checking: FS_FILE_NOT_FOUND
+    short success = file_exists(file->fsname);
     if (!success)
     {
         fserror = FS_FILE_NOT_FOUND;
         return 0;
     }
 
+    // Grabbing current inode & directory
     short inode_index = get_inode_index(file->fsname);
     short i_block = get_inode_block(file->inode_id);
     short directory_index = get_directory_index(file->fsname);
@@ -420,64 +441,14 @@ unsigned long read_file(File file, void *buf, unsigned long numbytes)
     read_sd_block(directory_array, directory_block);
     read_sd_block(inode_array, i_block);
 
-    // Check for direct blocks
-
-    // uint8_t direct_index = get_direct_data_index(inode_index);
-    // uint16_t indirect_index = get_indirect_data_index(inode_index);
-    // uint16_t indirect_pointer_index = get_indirect_pointer_index(inode_index);
-
-    // Checking if the file is open
+    // Checking: FS_FILE_NOT_OPEN
     if (!directory_array[directory_index]->open)
     {
         fserror = FS_FILE_NOT_OPEN;
         return 0;
     }
 
-    if (inode_array[inode_index]->size + numbytes > MAX_FILE_SIZE)
-    {
-        fserror = FS_EXCEEDS_MAX_FILE_SIZE;
-        return 0;
-    }
-
-    for (short i = 0; i < NUM_DIRECT_INODE_BLOCKS; i++)
-    {
-        if (inode_array[inode_index]->direct_blocks[i] != 0)
-        {
-            read_sd_block(buf, (inode_array[inode_index]->direct_blocks[i] + FIRST_DATA_BLOCK) - 1);
-            printf("READ BUFFER IS: %s\n", buf);
-            printf("Num Bytes being written in: %d\n", strlen(buf));
-
-            return strlen(buf);
-        }
-    }
-} */
-
-unsigned long read_file(File file, void *buf, unsigned long numbytes)
-{
-    fserror = FS_NONE;
-    short success = file_exists(file->fsname);
-
-    if (!success)
-    {
-        fserror = FS_FILE_NOT_FOUND;
-        return 0;
-    }
-
-    short inode_index = get_inode_index(file->fsname);
-    short i_block = get_inode_block(file->inode_id);
-    short directory_index = get_directory_index(file->fsname);
-    short directory_block = get_directory_block(file->fsname);
-
-    read_sd_block(directory_array, directory_block);
-    read_sd_block(inode_array, i_block);
-
-    // Checking if the file is open
-    if (!directory_array[directory_index]->open)
-    {
-        fserror = FS_FILE_NOT_OPEN;
-        return 0;
-    }
-
+    // Checking: FS_EXCEEDS_MAX_FILE_SIZE
     if (inode_array[inode_index]->size + numbytes > MAX_FILE_SIZE)
     {
         fserror = FS_EXCEEDS_MAX_FILE_SIZE;
@@ -485,87 +456,21 @@ unsigned long read_file(File file, void *buf, unsigned long numbytes)
     }
 
     short data_block = (inode_array[inode_index]->position / SOFTWARE_DISK_BLOCK_SIZE) + FIRST_DATA_BLOCK;
-    printf("I'm currently here %d\n", data_block);
-
-    // check for direct blocks
-    for (short i = 0; i < NUM_DIRECT_INODE_BLOCKS; i++)
-    {
-        if (inode_array[inode_index]->direct_blocks[i] != 0)
-        {
-            // Reading data from direct block and copy it to buf
-            uint8_t mapped_block = (325 - (256 - inode_array[inode_index]->direct_blocks[i]));
-            if (mapped_block == data_block)
-            {
-                printf("LINKAGE CONFIRMED");
-            }
-            else
-            {
-                printf("SOMETHING WENT WRONG");
-                return 0;
-            }
-
-            if (i == 255)
-            {
-                read_sd_block(buf, 325);
-                printf("DIRECT READ: buffer is: %s\n", buf);
-                return strlen(buf);
-            }
-            // uint16_t mapped_index = (inode_array[inode_index]->direct_blocks[i] + FIRST_DATA_BLOCK) - 1;
-            printf("mapped_block is: %d\n", mapped_block);
-            read_sd_block(buf, mapped_block);
-            printf("DIRECT READ: buffer is: %s\n", buf);
-            unsigned long bytes_read = strlen(buf);
-            return bytes_read;
-        }
-    }
-    if (inode_array[inode_index]->single_indrect != 0)
-    {
-
-        // Read the indirect block
-        uint16_t indirect_block_index = inode_array[inode_index]->single_indrect;
-        uint16_t single_indirect_array[SOFTWARE_DISK_BLOCK_SIZE];
-        // Does read_sd_block not only read but store the value?
-        read_sd_block(single_indirect_array, indirect_block_index);
-        for (short i = 0; i < SOFTWARE_DISK_BLOCK_SIZE; i++)
-        {
-            if (single_indirect_array[i] != 0)
-            {
-                // kind of followed your read block
-                uint16_t mapped_index = (single_indirect_array[i] + FIRST_DATA_BLOCK) - 1;
-                printf("Mapped_Index %d\n", mapped_index);
-                if (mapped_index > data_block + 1)
-                {
-                    short index = (data_block + 1) - mapped_index;
-                    printf("Reading from block{%d}", data_block + 1);
-                    read_sd_block(buf, mapped_index);
-                    unsigned long bytes_written;
-                    return bytes_written;
-                }
-                unsigned long bytesread = strlen(buf);
-                char empty_buffer[bytesread];
-                memset(empty_buffer, 0, bytesread);
-                write_sd_block(empty_buffer, mapped_index);
-                // write_sd_block(single_indirect_array[i] - FIRST_DATA_BLOCK, mapped_index);
-                printf("INDIRECT READ: buffer is: %s\n", buf);
-                return bytesread;
-            }
-        }
-    }
-    // For Indirect blocks
-    //  Determine the number of indirect blocks required based on numbytes
-    // Read the indirect blocks from the disk
-    // iterate through the indirect blocks and read the data blocks they point to
-    // Copy the data from the data blocks to the buffer
-    printf("READ FAILED");
-    return 0;
+    printf("mapped_block is: %d\n", data_block);
+    read_sd_block(buf, data_block);
+    printf("READ: buffer is: %s\n", buf);
+    unsigned long bytes_read = strlen(buf);
+    printf("RETURNING: %d\n", bytes_read);
+    return bytes_read;
 }
 
-/*TWEAK IT UP SOME*/ // TODO: CHANGE POSITITON!!!!!
+// Expected Errors: FS_FILE_NOT_FOUND, FS_FILE_NOT_OPEN, FS_FILE_READ_ONLY
 unsigned long write_file(File file, void *buf, unsigned long numbytes)
 {
     fserror = FS_NONE;
     short is_direct = 1;
-    // printf("Here\n");
+
+    // Checking: FS_FILE_NOT_FOUND
     int success = file_exists(file->fsname);
     if (!success)
     {
@@ -575,56 +480,65 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
         return 0;
     }
 
+    // Grabbing most recent inode/directory array
     short inode_index = get_inode_index(file->fsname);
     short i_block = get_inode_block(file->inode_id);
     short directory_index = get_directory_index(file->fsname);
     short directory_block = get_directory_block(file->fsname);
-
     read_sd_block(inode_array, i_block);
     read_sd_block(directory_array, directory_block);
 
+    // Checking: FS_FILE_READ_ONLY
     if (inode_array[inode_index]->mode == READ_ONLY)
     {
         fserror = FS_FILE_READ_ONLY;
         return 0;
     }
 
+    // Checking: FS_FILE_NOT_OPEN
     if (directory_array[directory_index]->open == false)
     {
         fserror = FS_FILE_NOT_OPEN;
         return 0;
     }
 
-    short size = inode_array[inode_index]->size;
-    short s_bytes = numbytes;
-    // printf("Write would be: %d", size + s_bytes);
-    if (size > MAX_FILE_SIZE)
-    {
+    uint16_t size = inode_array[inode_index]->position;
+    uint16_t s_bytes = (uint16_t)numbytes;
 
+    // Writing into buffer
+    char buffer[numbytes];
+    memcpy(buffer, buf, numbytes);
+
+    // Invalid Write: due to writing into buffer that is too small, probably not necessary
+    if (strlen(buffer) < numbytes)
+    {
+        fserror = FS_OUT_OF_SPACE; // Come back and check
+        return 0;
+    }
+
+    // Checking: FS_EXCEEDS_MAX_FILE_SIZE
+    if (size + numbytes > MAX_FILE_SIZE) // 65535
+    {
+        fail_writes++; // tracker
+        printf("Ran out of space buddy %d\n", fail_writes);
         fserror = FS_EXCEEDS_MAX_FILE_SIZE;
         return 0;
     }
 
-    read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
+    short data_block = (inode_array[inode_index]->position / SOFTWARE_DISK_BLOCK_SIZE) + FIRST_DATA_BLOCK; // grabbing current block based on position
+    short block_to_char_offset = (data_block - FIRST_DATA_BLOCK) + 1;                                      // indexing/mapping array to store data in uint8_t
+    // printf("WORKING WITH BLOCK: %d and Position: %d\n", data_block, inode_array[inode_index]->position);
 
-    // Writing Data
-    char buffer[numbytes];
-    memcpy(buffer, buf, numbytes);
-    // printf("CONTENTS %s\n", buffer);
-    // printf("LENGTH OF THING IS: %d\n", strlen(buffer));
-    if (strlen(buffer) < numbytes)
-    {
-        printf("INVALID!!!!\n");
-        return 0;
-    }
-    short data_block = (inode_array[inode_index]->position / SOFTWARE_DISK_BLOCK_SIZE) + FIRST_DATA_BLOCK;
-    short block_to_char_offset = (data_block - FIRST_DATA_BLOCK) + 1;
-
+    /* BEGIN: Direct Block Handler */
+    //  Continue writing to filled Direct block
     for (short i = 0; i < NUM_DIRECT_INODE_BLOCKS; i++)
     {
         if (inode_array[inode_index]->direct_blocks[i] == block_to_char_offset)
         {
-            write_sd_block(buffer, data_block);
+            write_sd_block(buffer, data_block); // Writing buffer -> data_block
+            read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
+            data_bitmap[data_block - 1] = 1; // Updating bitmap array
+            write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
             unsigned long bytes_written = strlen(buffer);
             inode_array[inode_index]->position += bytes_written;
             inode_array[inode_index]->size = bytes_written;
@@ -632,6 +546,7 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
             printf("DIRECT WRITE: {%s}'s Direct_Block[%d] -> %d -> Block{%d} -> %s\n", directory_array[directory_index]->fsname, i, inode_array[inode_index]->direct_blocks[i], data_block, buffer);
             return bytes_written;
         }
+        // Manually indexs the 325 -> 0 due to uint8_t storage
         else if (data_block == 325)
         {
             for (short i = 1; i < NUM_DIRECT_INODE_BLOCKS; i++)
@@ -639,8 +554,12 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
                 if (inode_array[inode_index]->direct_blocks[i] == 0)
                 {
                     inode_array[inode_index]->direct_blocks[i] = 0;
-                    unsigned long bytes_written = strlen(buffer);
+
                     write_sd_block(buffer, data_block);
+                    read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
+                    data_bitmap[data_block - 1] = 1; // Updating bitmap array
+                    write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
+                    unsigned long bytes_written = strlen(buffer);
                     inode_array[inode_index]->position += bytes_written;
                     inode_array[inode_index]->size = bytes_written;
                     write_sd_block(inode_array, i_block);
@@ -649,42 +568,48 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
                 }
             }
         }
+        // Creating new direct_block entry
         else if (inode_array[inode_index]->direct_blocks[i] == 0)
         {
-            inode_array[inode_index]->direct_blocks[i] = block_to_char_offset;
+
+            inode_array[inode_index]->direct_blocks[i] = block_to_char_offset; // Assigning direct block to mapped uint8_t direct
             read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
-            data_bitmap[data_block] = find_free_data_block();
+            data_bitmap[data_block - 1] = 1; // Updating bitmap array
+            write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
             write_sd_block(buffer, data_block);
             unsigned long bytes_written = strlen(buffer);
             inode_array[inode_index]->position += bytes_written;
             inode_array[inode_index]->size = bytes_written;
-            write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
             write_sd_block(inode_array, i_block);
             printf("DIRECT WRITE: {%s}'s Direct_Block[%d] -> %d -> Block{%d} -> %s\n", directory_array[directory_index]->fsname, i, inode_array[inode_index]->direct_blocks[i], data_block, buffer);
             return bytes_written;
         }
     }
+    /* END: Direct Block Handler */
 
-    // First One
+    /* BEGIN: Indirect Block Handler */
+    // Dealing with first Indirect Entry
     if (inode_array[inode_index]->single_indrect == 0)
     {
-        printf("I am here\n");
-        inode_array[inode_index]->single_indrect = data_block;
+
+        inode_array[inode_index]->single_indrect = data_block; // Assigning indirect_block -> data_block
         uint16_t single_indirect_array[SOFTWARE_DISK_BLOCK_SIZE];
         memset(single_indirect_array, (uint16_t)0, SOFTWARE_DISK_BLOCK_SIZE);
         short single_indirect_entry = find_free_data_block();
+        // Force first right into the Indirect_block's array's first field
+        // Visual: Indirectblock --> single_indirect_array[0] --> block --> buffer/data
         for (uint16_t i = 0; i < SOFTWARE_DISK_BLOCK_SIZE; i++)
         {
             if (single_indirect_array[i] == 0)
             {
                 single_indirect_array[i] = single_indirect_entry;
-                write_sd_block(single_indirect_array, data_block);
+                write_sd_block(buffer, single_indirect_array[i]); // Write the data {Store}
                 unsigned long bytes_written = strlen(buffer);
                 inode_array[inode_index]->position += bytes_written;
                 inode_array[inode_index]->size = bytes_written;
-                write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect);
+                write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect); // Write the array into the block to store
                 write_sd_block(inode_array, i_block);
-                printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_entry, buffer);
+                printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_array[i], buffer);
                 return bytes_written;
             }
         }
@@ -692,16 +617,17 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
 
     uint16_t single_indirect_array[SOFTWARE_DISK_BLOCK_SIZE];
     read_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect);
-    for (short i = 0; i < SOFTWARE_DISK_BLOCK_SIZE; i++)
+    // Continue the write to current index in the single_indirect_array
+    for (short i = 0; i < NUM_SINGLE_INDIRECT_BLOCKS; i++)
     {
         uint16_t temp_array[SOFTWARE_DISK_BLOCK_SIZE];
         char buffer_check[SOFTWARE_DISK_BLOCK_SIZE];
         read_sd_block(buffer_check, single_indirect_array[i]);
-        // Continue
-        if (single_indirect_array[i] != 0 && (strlen(buffer) < SOFTWARE_DISK_BLOCK_SIZE))
+
+        if (single_indirect_array[i] == data_block && strlen(buffer_check) <= SOFTWARE_DISK_BLOCK_SIZE) // Checking for both availability and capability {size}
         {
             unsigned long bytes_written = strlen(buffer);
-            write_sd_block(single_indirect_array, data_block);
+            write_sd_block(buffer, single_indirect_array[i]);
             inode_array[inode_index]->position += bytes_written;
             inode_array[inode_index]->size = bytes_written;
             write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect);
@@ -709,26 +635,33 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
             printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_array[i], buffer);
             return bytes_written;
         }
-        // Appending
-        else
+    }
+    // Assigning new single_indirect_array index
+    for (short i = 0; i < SOFTWARE_DISK_BLOCK_SIZE; i++)
+    {
+        if (single_indirect_array[i] == 0)
         {
             unsigned long bytes_written = strlen(buffer);
             short single_indirect_entry = find_free_data_block();
             single_indirect_array[i] = single_indirect_entry;
-            write_sd_block(single_indirect_array, data_block);
+            write_sd_block(buffer, single_indirect_array[i]); // Write the data {Store}
             inode_array[inode_index]->position += bytes_written;
             inode_array[inode_index]->size = bytes_written;
             write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect);
             write_sd_block(inode_array, i_block);
-            printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_entry, buffer);
+            printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_array[i], buffer);
             return bytes_written;
         }
     }
-    fserror = FS_OUT_OF_SPACE; // Replace
+    /* END: Indirect Block Handler */
+
+    fserror = FS_OUT_OF_SPACE;
+    inode_array[inode_index]->position += 0;
+    write_sd_block(inode_array, i_block);
     return 0;
 }
 
-// TODO: CHANGE POSITION!!!!!!!!
+// Expected Errors: FS_FILE_NOT_FOUND, FS_FILE_NOT_OPEN, FS_EXCEEDS_MAX_FILE_SIZE
 int seek_file(File file, unsigned long bytepos)
 {
     fserror = FS_NONE;
@@ -737,24 +670,33 @@ int seek_file(File file, unsigned long bytepos)
     if (!success)
     {
         fserror = FS_FILE_NOT_FOUND;
+        return 0;
     }
 
     char inode_index = get_inode_index(file->fsname);
     char i_block = get_inode_block(file->inode_id);
     read_sd_block(inode_array, i_block);
 
-    if ((inode_array[inode_index]->size + bytepos) >= MAX_FILE_SIZE)
+    if (file->open == false)
+    {
+        fserror = FS_FILE_NOT_OPEN;
+        return 0;
+    }
+
+    if ((inode_array[inode_index]->position + bytepos) > MAX_FILE_SIZE)
     {
         fserror = FS_EXCEEDS_MAX_FILE_SIZE;
         return 0;
     }
+
     printf("Position was: %d\n", inode_array[inode_index]->size);
-    inode_array[inode_index]->size += bytepos;
+    inode_array[inode_index]->position = bytepos;
     write_sd_block(inode_array, i_block);
     printf("Position is now: %d\n", inode_array[inode_index]->size);
     return 1;
 }
 
+// Expected Erros: FS_FILE_NOT_FOUND, FS_FILE_OPEN
 int delete_file(char *name)
 {
     fserror = FS_NONE;
@@ -772,10 +714,18 @@ int delete_file(char *name)
     read_sd_block(inode_array, i_block);
     read_sd_block(directory_array, directory_block);
 
+    if (directory_array[directory_index]->open == true)
+    {
+        fserror = FS_FILE_OPEN;
+        return 0;
+    }
+
+    read_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
+    read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
     inode_bitmap[inode_index] = 0;
     data_bitmap[directory_index] = 0;
-    free(inode_array[inode_index]);
-    free(directory_array[directory_index]);
+    inode_array[inode_index] = NULL;         // Freeing the actual Inode
+    directory_array[directory_index] = NULL; // Freeing the actual File_Internal
     write_sd_block(inode_array, i_block);
     write_sd_block(directory_array, directory_block);
     write_sd_block(inode_bitmap, INODE_BITMAP_BLOCK);
@@ -784,6 +734,7 @@ int delete_file(char *name)
     return 1;
 }
 
+//COME BACK
 unsigned long file_length(File file)
 {
     short success = file_exists(file->fsname);
@@ -798,6 +749,7 @@ unsigned long file_length(File file)
     return inode_array[i_block]->size;
 }
 
+// NO ERRORS THROWN
 int file_exists(char *name)
 {
     // printf("being called\n");
@@ -819,8 +771,6 @@ int file_exists(char *name)
         }
         potential_block++;
     }
-    printf("NON_EXIST: File{%s} NOT FOUND!", name);
-
-    fserror = FS_FILE_NOT_FOUND;
     return 0;
 }
+/*END: SYSTEM CALLS*/
