@@ -422,6 +422,8 @@ void close_file(File file)
 // Expected Errors: FS_FILE_NOT_FOUND, FS_FILE_NOT_OPEN, FS_EXCEEDS_MAX_FILE_SIZE, access controls?
 unsigned long read_file(File file, void *buf, unsigned long numbytes)
 {
+    void *buffer_bucket[SOFTWARE_DISK_BLOCK_SIZE];
+    printf("FUNCTION CALLED: Buffer is %s\n", buf);
     fserror = FS_NONE;
 
     // Checking: FS_FILE_NOT_FOUND
@@ -455,13 +457,14 @@ unsigned long read_file(File file, void *buf, unsigned long numbytes)
         return 0;
     }
 
+    printf("Buf orginaly is, %s", buf);
     short data_block = (inode_array[inode_index]->position / SOFTWARE_DISK_BLOCK_SIZE) + FIRST_DATA_BLOCK;
     printf("mapped_block is: %d\n", data_block);
-    read_sd_block(buf, data_block);
+    read_sd_block(buffer_bucket, data_block);
+    memcpy(buf, buffer_bucket, numbytes);
+    printf("Buffer Bucket %s", buffer_bucket);
     printf("READ: buffer is: %s\n", buf);
-    unsigned long bytes_read = strlen(buf);
-    printf("RETURNING: %d\n", bytes_read);
-    return bytes_read;
+    return numbytes;
 }
 
 // Expected Errors: FS_FILE_NOT_FOUND, FS_FILE_NOT_OPEN, FS_FILE_READ_ONLY
@@ -533,15 +536,15 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
     //  Continue writing to filled Direct block
     for (short i = 0; i < NUM_DIRECT_INODE_BLOCKS; i++)
     {
-        if (inode_array[inode_index]->direct_blocks[i] == block_to_char_offset)
+        if (inode_array[inode_index] != NULL && inode_array[inode_index]->direct_blocks[i] == block_to_char_offset)
         {
-            write_sd_block(buffer, data_block); // Writing buffer -> data_block
+            int ret = write_sd_block(buffer, data_block); // Writing buffer -> data_block
             read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
             data_bitmap[data_block - 1] = 1; // Updating bitmap array
             write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
             unsigned long bytes_written = strlen(buffer);
             inode_array[inode_index]->position += bytes_written;
-            inode_array[inode_index]->size = bytes_written;
+            inode_array[inode_index]->size += bytes_written;
             write_sd_block(inode_array, i_block);
             printf("DIRECT WRITE: {%s}'s Direct_Block[%d] -> %d -> Block{%d} -> %s\n", directory_array[directory_index]->fsname, i, inode_array[inode_index]->direct_blocks[i], data_block, buffer);
             return bytes_written;
@@ -573,6 +576,9 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
         {
 
             inode_array[inode_index]->direct_blocks[i] = block_to_char_offset; // Assigning direct block to mapped uint8_t direct
+            char buffer2[100000];
+
+
             read_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
             data_bitmap[data_block - 1] = 1; // Updating bitmap array
             write_sd_block(data_bitmap, DATA_BITMAP_BLOCK);
@@ -606,7 +612,7 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
                 write_sd_block(buffer, single_indirect_array[i]); // Write the data {Store}
                 unsigned long bytes_written = strlen(buffer);
                 inode_array[inode_index]->position += bytes_written;
-                inode_array[inode_index]->size = bytes_written;
+                inode_array[inode_index]->size += bytes_written;
                 write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect); // Write the array into the block to store
                 write_sd_block(inode_array, i_block);
                 printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_array[i], buffer);
@@ -629,7 +635,7 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
             unsigned long bytes_written = strlen(buffer);
             write_sd_block(buffer, single_indirect_array[i]);
             inode_array[inode_index]->position += bytes_written;
-            inode_array[inode_index]->size = bytes_written;
+            inode_array[inode_index]->size += bytes_written;
             write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect);
             write_sd_block(inode_array, i_block);
             printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_array[i], buffer);
@@ -646,7 +652,7 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
             single_indirect_array[i] = single_indirect_entry;
             write_sd_block(buffer, single_indirect_array[i]); // Write the data {Store}
             inode_array[inode_index]->position += bytes_written;
-            inode_array[inode_index]->size = bytes_written;
+            inode_array[inode_index]->size += bytes_written;
             write_sd_block(single_indirect_array, inode_array[inode_index]->single_indrect);
             write_sd_block(inode_array, i_block);
             printf("INDIRECT WRITE: {%s}'s Single_Indirect_Block[%d] -> Single_Indirect_Index[%u] -> Block[%d] -> %s\n", directory_array[directory_index]->fsname, inode_array[inode_index]->single_indrect, i, single_indirect_array[i], buffer);
@@ -689,10 +695,10 @@ int seek_file(File file, unsigned long bytepos)
         return 0;
     }
 
-    printf("Position was: %d\n", inode_array[inode_index]->size);
+    printf("Position was: %d\n", inode_array[inode_index]->position);
     inode_array[inode_index]->position = bytepos;
     write_sd_block(inode_array, i_block);
-    printf("Position is now: %d\n", inode_array[inode_index]->size);
+    printf("Position is now: %d\n", inode_array[inode_index]->position);
     return 1;
 }
 
@@ -734,7 +740,7 @@ int delete_file(char *name)
     return 1;
 }
 
-//COME BACK
+// COME BACK
 unsigned long file_length(File file)
 {
     short success = file_exists(file->fsname);
@@ -773,4 +779,17 @@ int file_exists(char *name)
     }
     return 0;
 }
+
+int check_structure_alignment(void)
+{
+
+    printf("Size of Inode: %lu\n", sizeof(Inode));
+    printf("Size of File: %lu\n", sizeof(FileInternals));
+    if (sizeof(Inode) != 24 || sizeof(FileInternals) != 8)
+    {
+        return 0;
+    }
+    return 1;
+}
+
 /*END: SYSTEM CALLS*/
